@@ -4,6 +4,7 @@
 // frames, and a .txt session summary.
 //
 //   dotnet run --project src/OpusVoice.Receiver                    # Pinhole mode (default)
+//   dotnet run --project src/OpusVoice.Receiver -- iroh            # publish native iroh ID/ticket + Pinhole key binding
 //   dotnet run --project src/OpusVoice.Receiver -- udp 5004        # plain UDP RTP (works with the APK today)
 //   dotnet run --project src/OpusVoice.Receiver -- ws 8080         # WebSocket bridge for the web console
 //   --port N / a bare number overrides the port; --out DIR changes the output directory.
@@ -14,7 +15,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 
-string mode = args.FirstOrDefault(a => a is "pinhole" or "udp" or "ws") ?? "pinhole";
+string mode = args.FirstOrDefault(a => a is "pinhole" or "iroh" or "udp" or "ws") ?? "pinhole";
 int port = 5004;
 string outDir = ".";
 for (int i = 0; i < args.Length; i++)
@@ -52,7 +53,7 @@ try
     }
     else
     {
-        await RunPinhole(basePath, session, cts.Token);
+        await RunPinhole(basePath, session, cts.Token, publishIroh: mode == "iroh");
     }
 }
 catch (OperationCanceledException)
@@ -129,16 +130,22 @@ static async Task HandleSocket(HttpListenerContext http, CaptureSession session)
     }
 }
 
-static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct)
+static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct, bool publishIroh)
 {
     // ReceiveBufferCapacity enables the buffered ReadAllAsync loop; 64 KiB is
     // several seconds of 128 kbps audio, so datagrams never drop off-thread.
     await using PinholeNode node = await PinholeNode.BindAsync(
-        new PinholeOptions { ReceiveBufferCapacity = 64 * 1024 }, ct);
+        new PinholeOptions { ReceiveBufferCapacity = 64 * 1024, PublishIrohAddress = publishIroh }, ct);
     Console.WriteLine("connection string — give this to the sender:");
     Console.WriteLine("  " + node.ConnectionString);
     Console.WriteLine("…or scan this QR code from the app (Pinhole mode):");
-    PrintQr(node.ConnectionString, caption: null);
+    if (publishIroh)
+    {
+        Console.WriteLine("iroh endpoint ID — paste this in the app:");
+        Console.WriteLine("  " + node.IrohAddress.EndpointId);
+        PrintQr(node.IrohAddress.ToString(), "native iroh endpoint ticket (session key is verified through signed discovery):");
+    }
+    else PrintQr(node.ConnectionString, caption: null);
     Console.WriteLine("waiting for a peer to connect…");
     await using PinholeConnection conn = await node.AcceptAsync(ct);
     Console.WriteLine($"connected ({conn.Path.Kind} path, remote {conn.Path.Remote?.ToString() ?? "?"})");

@@ -10,13 +10,19 @@ be inspected, measured, and played back:
 - `capture-*.txt` — session summary: ssrc, packet/frame counts, losses,
   duplicates, duration, payload bitrate.
 
-Two transports:
+Connection modes:
 
 - **`pinhole` (default)** — binds a [Pinhole.Net](https://github.com/IAFahim/Pinhole.Net)
   node, prints its **connection string** (`pinhole1:…`), and accepts one peer.
   Datagrams tunneled through Pinhole are exactly the app's RTP packets, so the
   stream rides NAT traversal + end-to-end encryption with relay fallback
   instead of raw UDP.
+- **`iroh`** — the same encrypted Pinhole session, with native iroh discovery and
+  relay connectivity. Publishes the signed endpoint ID → Pinhole public-key
+  binding and prints an ID and native endpoint QR ticket for the Android app.
+  Requires the updated Pinhole.Net and OpusVoice source builds. The default
+  identity is fresh on each run; persist `PinholeOptions.IdentityKeySeed` for
+  a stable ID.
 - **`udp`** — plain UDP RTP listener on a port (default 5004). This is what the
   released APK speaks today; use it for immediate testing.
 
@@ -26,11 +32,14 @@ Two transports:
 # Pinhole mode: run this, then paste the printed connection string into the sender
 dotnet run --project src/OpusVoice.Receiver
 
+# Native iroh ID/ticket: publish signed discovery, then scan the QR in OpusVoice
+dotnet run --project src/OpusVoice.Receiver -- iroh
+
 # Plain UDP mode (works with the current OpusVoice APK: point the app at this PC's IP)
 dotnet run --project src/OpusVoice.Receiver -- udp 5004
 
 # Options
-#   udp | pinhole      transport (default pinhole)
+#   udp | pinhole | iroh | ws   mode (default pinhole)
 #   5004 | --port N    UDP port in udp mode
 #   --out DIR          output directory (default: current directory)
 ```
