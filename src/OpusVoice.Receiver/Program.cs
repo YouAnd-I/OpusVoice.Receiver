@@ -8,6 +8,7 @@
 //   --port N / a bare number overrides the UDP port; --out DIR changes the output directory.
 using OpusVoice.Receiver;
 using Pinhole;
+using QRCoder;
 using System.Net;
 using System.Net.Sockets;
 
@@ -57,8 +58,10 @@ Console.WriteLine("capture closed.");
 static async Task RunUdp(int port, string basePath, CaptureSession session, CancellationToken ct)
 {
     using var udp = new UdpClient(new IPEndPoint(IPAddress.Any, port));
+    string lanIp = BestLocalIpv4();
     Console.WriteLine($"listening: udp://0.0.0.0:{port}  (point the app at this machine's IP, port {port})");
     Console.WriteLine($"writing:   {basePath}.opus (+ .adpcm sidecar, .txt summary)");
+    PrintQr($"udp://{lanIp}:{port}", $"scan in the app (UDP mode): udp://{lanIp}:{port}");
     while (!ct.IsCancellationRequested)
     {
         UdpReceiveResult result = await udp.ReceiveAsync(ct);
@@ -74,6 +77,8 @@ static async Task RunPinhole(string basePath, CaptureSession session, Cancellati
         new PinholeOptions { ReceiveBufferCapacity = 64 * 1024 }, ct);
     Console.WriteLine("connection string — give this to the sender:");
     Console.WriteLine("  " + node.ConnectionString);
+    Console.WriteLine("…or scan this QR code from the app (Pinhole mode):");
+    PrintQr(node.ConnectionString, caption: null);
     Console.WriteLine("waiting for a peer to connect…");
     await using PinholeConnection conn = await node.AcceptAsync(ct);
     Console.WriteLine($"connected ({conn.Path.Kind} path, remote {conn.Path.Remote?.ToString() ?? "?"})");
@@ -84,4 +89,45 @@ static async Task RunPinhole(string basePath, CaptureSession session, Cancellati
         session.OnDatagram(datagram.Span);
     }
     Console.WriteLine("peer disconnected");
+}
+
+/// <summary>The machine's best-guess LAN IPv4: what a phone on the same network would dial.</summary>
+static string BestLocalIpv4()
+{
+    try
+    {
+        using var probe = new UdpClient();
+        probe.Client.Connect(new IPEndPoint(IPAddress.Parse("8.8.8.8"), 53)); // no packet leaves; routing picks the NIC
+        return (probe.Client.LocalEndPoint as IPEndPoint)?.Address.ToString() ?? "127.0.0.1";
+    }
+    catch
+    {
+        return "127.0.0.1";
+    }
+}
+
+/// <summary>Terminal QR via QRCoder's half-block ASCII renderer; ECC L keeps the
+/// module count (and the on-screen code) small for long connection strings.</summary>
+static void PrintQr(string payload, string? caption)
+{
+    try
+    {
+        using var generator = new QRCodeGenerator();
+        using var data = generator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.L);
+        string ascii = new AsciiQRCode(data).GetGraphic(1);
+        Console.WriteLine();
+        foreach (string line in ascii.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            Console.WriteLine("  " + line);
+        }
+        if (caption != null)
+        {
+            Console.WriteLine("  " + caption);
+        }
+        Console.WriteLine();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"(QR rendering failed: {ex.Message})");
+    }
 }
