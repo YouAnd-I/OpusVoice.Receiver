@@ -1,0 +1,27 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The receiver references a sibling Pinhole.Net checkout (same pattern as
+      # the OpusVoice interop job); CI materializes it at the workspace root.
+      - uses: actions/checkout@v5
+        with:
+          repository: IAFahim/Pinhole.Net
+          path: Pinhole.Net
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build (Release)
+        run: dotnet build src/OpusVoice.Receiver -c Release -p:PinholeRoot=${{ github.workspace }}/Pinhole.Net

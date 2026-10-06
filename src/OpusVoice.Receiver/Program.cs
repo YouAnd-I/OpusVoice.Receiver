@@ -5,14 +5,16 @@
 //
 //   dotnet run --project src/OpusVoice.Receiver                    # Pinhole mode (default)
 //   dotnet run --project src/OpusVoice.Receiver -- udp 5004        # plain UDP RTP (works with the APK today)
-//   --port N / a bare number overrides the UDP port; --out DIR changes the output directory.
+//   dotnet run --project src/OpusVoice.Receiver -- ws 8080         # WebSocket bridge for the web console
+//   --port N / a bare number overrides the port; --out DIR changes the output directory.
 using OpusVoice.Receiver;
 using Pinhole;
 using QRCoder;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 
-string mode = args.FirstOrDefault(a => a is "pinhole" or "udp") ?? "pinhole";
+string mode = args.FirstOrDefault(a => a is "pinhole" or "udp" or "ws") ?? "pinhole";
 int port = 5004;
 string outDir = ".";
 for (int i = 0; i < args.Length; i++)
@@ -44,6 +46,10 @@ try
     {
         await RunUdp(port, basePath, session, cts.Token);
     }
+    else if (mode == "ws")
+    {
+        await RunWs(port, basePath, session, cts.Token);
+    }
     else
     {
         await RunPinhole(basePath, session, cts.Token);
@@ -66,6 +72,60 @@ static async Task RunUdp(int port, string basePath, CaptureSession session, Canc
     {
         UdpReceiveResult result = await udp.ReceiveAsync(ct);
         session.OnDatagram(result.Buffer);
+    }
+}
+
+/// <summary>
+/// WebSocket bridge for the web console (web/ in the OpusVoice repo): browsers
+/// cannot send raw UDP, so the console streams the exact same RTP+Opus packets
+/// as binary WebSocket messages. Each message is one datagram — one 20 ms frame
+/// in a 12-byte RTP header — and feeds the same sink as the UDP path.
+/// </summary>
+static async Task RunWs(int port, string basePath, CaptureSession session, CancellationToken ct)
+{
+    var listener = new HttpListener();
+    listener.Prefixes.Add($"http://+:{port}/");
+    listener.Start();
+    string lanIp = BestLocalIpv4();
+    Console.WriteLine($"listening: ws://{lanIp}:{port}/stream  (web console: scan or paste this)");
+    Console.WriteLine($"writing:   {basePath}.opus (+ .adpcm sidecar, .txt summary)");
+    PrintQr($"ws://{lanIp}:{port}/stream", $"scan in the web console (Voice mode): ws://{lanIp}:{port}/stream");
+    while (!ct.IsCancellationRequested)
+    {
+        HttpListenerContext http = await listener.GetContextAsync().WaitAsync(ct);
+        if (!http.Request.IsWebSocketRequest)
+        {
+            http.Response.StatusCode = 426; // Upgrade Required
+            http.Response.Headers["Sec-WebSocket-Version"] = "13";
+            http.Response.Close();
+            continue;
+        }
+        _ = HandleSocket(http, session); // fire-and-forget: several consoles may stream at once
+    }
+}
+
+static async Task HandleSocket(HttpListenerContext http, CaptureSession session)
+{
+    string peer = http.Request.RemoteEndPoint?.ToString() ?? "?";
+    try
+    {
+        using WebSocket ws = (await http.AcceptWebSocketAsync(null)).WebSocket;
+        Console.WriteLine($"web console connected ({peer})");
+        var buffer = new byte[64 * 1024];
+        while (ws.State == WebSocketState.Open)
+        {
+            WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close) break;
+            if (result.EndOfMessage && result.Count >= 12)
+            {
+                session.OnDatagram(buffer.AsSpan(0, result.Count));
+            }
+        }
+        Console.WriteLine($"web console disconnected ({peer})");
+    }
+    catch (Exception ex) when (ex is HttpListenerException or WebSocketException or OperationCanceledException)
+    {
+        Console.WriteLine($"web console error ({peer}): {ex.Message}");
     }
 }
 
