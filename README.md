@@ -17,6 +17,12 @@ Connection modes:
   Datagrams tunneled through Pinhole are exactly the app's RTP packets, so the
   stream rides NAT traversal + end-to-end encryption with relay fallback
   instead of raw UDP.
+- **`iroh`** — the same encrypted Pinhole session, with native iroh discovery and
+  relay connectivity. Publishes the signed endpoint ID → Pinhole public-key
+  binding and prints an ID and native endpoint QR ticket for the Android app.
+  Requires the updated Pinhole.Net and OpusVoice source builds. The default
+  identity is fresh on each run; persist `PinholeOptions.IdentityKeySeed` for
+  a stable ID.
 - **`udp`** — plain UDP RTP listener on a port (default 5004). This is what the
   released APK speaks today; use it for immediate testing.
 - **`ws`** — WebSocket bridge for the OpusVoice **web console** (browsers cannot
