@@ -4,8 +4,7 @@
 // frames, and a .txt session summary.
 //
 //   dotnet run --project src/OpusVoice.Receiver                    # Pinhole mode (default)
-//   dotnet run --project src/OpusVoice.Receiver -- iroh            # publish native iroh ID/ticket + Pinhole key binding
-//   dotnet run --project src/OpusVoice.Receiver -- udp 5004        # plain UDP RTP (works with the APK today)
+////   dotnet run --project src/OpusVoice.Receiver -- udp 5004        # plain UDP RTP (works with the APK today)
 //   dotnet run --project src/OpusVoice.Receiver -- ws 8080         # WebSocket bridge for the web console
 //   --port N / a bare number overrides the port; --out DIR changes the output directory.
 using OpusVoice.Receiver;
@@ -15,14 +14,18 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 
-string mode = args.FirstOrDefault(a => a is "pinhole" or "iroh" or "udp" or "ws") ?? "pinhole";
+string mode = args.FirstOrDefault(a => a is "pinhole" or "udp" or "ws") ?? "pinhole";
 int port = 5004;
 string outDir = ".";
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--port" && i + 1 < args.Length)
     {
-        port = int.Parse(args[++i]);
+        if (!int.TryParse(args[++i], out port) || port is < 1 or > 65535)
+        {
+            Console.WriteLine("error: --port expects a port number between 1 and 65535");
+            return;
+        }
     }
     else if (args[i] == "--out" && i + 1 < args.Length)
     {
@@ -53,7 +56,7 @@ try
     }
     else
     {
-        await RunPinhole(basePath, session, cts.Token, publishIroh: mode == "iroh");
+        await RunPinhole(basePath, session, cts.Token);
     }
 }
 catch (OperationCanceledException)
@@ -80,15 +83,32 @@ static async Task RunUdp(int port, string basePath, CaptureSession session, Canc
 /// WebSocket bridge for the web console (web/ in the OpusVoice repo): browsers
 /// cannot send raw UDP, so the console streams the exact same RTP+Opus packets
 /// as binary WebSocket messages. Each message is one datagram — one 20 ms frame
-/// in a 12-byte RTP header — and feeds the same sink as the UDP path.
+/// in a 12-byte RTP header — and feeds the same sink as the UDP path. Several
+/// consoles may connect at once; the capture follows one sender at a time and
+/// re-latches to a new SSRC after the previous sender goes silent for a few
+/// seconds (a stopped and restarted console mints a new SSRC). IPv4 only (the
+/// managed HttpListener cannot bind IPv6 wildcards).
 /// </summary>
 static async Task RunWs(int port, string basePath, CaptureSession session, CancellationToken ct)
 {
     var listener = new HttpListener();
     listener.Prefixes.Add($"http://+:{port}/");
-    listener.Start();
+    try
+    {
+        listener.Start();
+    }
+    catch (HttpListenerException ex)
+    {
+        Console.WriteLine($"error: could not listen on http://+:{port}/ — {ex.Message}");
+        if (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("       Windows requires the prefix reserved once (admin) or an elevated run:");
+            Console.WriteLine($"       netsh http add urlacl url=http://+:{port}/ user=%USERDOMAIN%\\%USERNAME%");
+        }
+        return;
+    }
     string lanIp = BestLocalIpv4();
-    Console.WriteLine($"listening: ws://{lanIp}:{port}/stream  (web console: scan or paste this)");
+    Console.WriteLine($"listening: ws://{lanIp}:{port}/stream  (web console: scan or paste this; IPv4 only)");
     Console.WriteLine($"writing:   {basePath}.opus (+ .adpcm sidecar, .txt summary)");
     PrintQr($"ws://{lanIp}:{port}/stream", $"scan in the web console (Voice mode): ws://{lanIp}:{port}/stream");
     while (!ct.IsCancellationRequested)
@@ -110,42 +130,67 @@ static async Task HandleSocket(HttpListenerContext http, CaptureSession session)
     string peer = http.Request.RemoteEndPoint?.ToString() ?? "?";
     try
     {
+        if (http.Request.Url?.AbsolutePath != "/stream")
+        {
+            http.Response.StatusCode = 404;
+            http.Response.Close();
+            return;
+        }
+
         using WebSocket ws = (await http.AcceptWebSocketAsync(null)).WebSocket;
         Console.WriteLine($"web console connected ({peer})");
         var buffer = new byte[64 * 1024];
+        bool discarding = false; // a started-but-unfinished message: its tail must never pose as a datagram
+        bool warnedOversize = false;
         while (ws.State == WebSocketState.Open)
         {
             WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-            if (result.MessageType == WebSocketMessageType.Close) break;
-            if (result.EndOfMessage && result.Count >= 12)
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                // Complete the close handshake so well-behaved clients exit cleanly.
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+                break;
+            }
+            if (!result.EndOfMessage)
+            {
+                discarding = true; // fragmented or larger than our buffer: drop the whole message
+                continue;
+            }
+            if (discarding)
+            {
+                discarding = false;
+                if (!warnedOversize)
+                {
+                    warnedOversize = true;
+                    Console.WriteLine($"\nwarning: dropped an oversized or fragmented message from {peer} (captures stay valid)");
+                }
+                continue;
+            }
+            if (result.MessageType == WebSocketMessageType.Binary && result.Count >= 12)
             {
                 session.OnDatagram(buffer.AsSpan(0, result.Count));
             }
         }
         Console.WriteLine($"web console disconnected ({peer})");
     }
-    catch (Exception ex) when (ex is HttpListenerException or WebSocketException or OperationCanceledException)
+    catch (Exception ex)
     {
+        // Broad catch in a fire-and-forget handler: a sink I/O failure or an aborted
+        // socket must be logged, never silently swallowed or unobserved.
         Console.WriteLine($"web console error ({peer}): {ex.Message}");
     }
 }
 
-static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct, bool publishIroh)
+static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct)
 {
     // ReceiveBufferCapacity enables the buffered ReadAllAsync loop; 64 KiB is
     // several seconds of 128 kbps audio, so datagrams never drop off-thread.
     await using PinholeNode node = await PinholeNode.BindAsync(
-        new PinholeOptions { ReceiveBufferCapacity = 64 * 1024, PublishIrohAddress = publishIroh }, ct);
+        new PinholeOptions { ReceiveBufferCapacity = 64 * 1024 }, ct);
     Console.WriteLine("connection string — give this to the sender:");
     Console.WriteLine("  " + node.ConnectionString);
     Console.WriteLine("…or scan this QR code from the app (Pinhole mode):");
-    if (publishIroh)
-    {
-        Console.WriteLine("iroh endpoint ID — paste this in the app:");
-        Console.WriteLine("  " + node.IrohAddress.EndpointId);
-        PrintQr(node.IrohAddress.ToString(), "native iroh endpoint ticket (session key is verified through signed discovery):");
-    }
-    else PrintQr(node.ConnectionString, caption: null);
+    PrintQr(node.ConnectionString, caption: null);
     Console.WriteLine("waiting for a peer to connect…");
     await using PinholeConnection conn = await node.AcceptAsync(ct);
     Console.WriteLine($"connected ({conn.Path.Kind} path, remote {conn.Path.Remote?.ToString() ?? "?"})");

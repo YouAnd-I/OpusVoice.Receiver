@@ -106,6 +106,16 @@ public sealed class OggOpusWriter : IDisposable
         _file.Write(body);
     }
 
+    /// <summary>Pushes written pages to the OS so a hard kill loses at most the last few
+    /// seconds (the periodic Report() calls this) instead of the whole capture.</summary>
+    public void Flush()
+    {
+        if (!_disposed)
+        {
+            _file.Flush();
+        }
+    }
+
     private bool _disposed;
 
     public void Dispose()

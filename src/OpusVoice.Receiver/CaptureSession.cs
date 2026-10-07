@@ -20,6 +20,7 @@ public sealed class CaptureSession : IDisposable
     private int _lastSeq = -1;
     private uint _firstTimestamp;
     private bool _sawFirstTimestamp;
+    private DateTime _lastAccept = DateTime.UtcNow;
     private byte[]? _pendingPayload; // held back until the next timestamp fixes its granule end
     private long _pendingSpan;
 
@@ -56,9 +57,29 @@ public sealed class CaptureSession : IDisposable
             }
             else if (header.Ssrc != _ssrc)
             {
-                _foreignSsrc++;
-                return;
+                // One capture, one sender — but a stopped and restarted sender mints a new
+                // SSRC, so re-latch once the current sender has been silent for a while.
+                if ((DateTime.UtcNow - _lastAccept).TotalSeconds > 3)
+                {
+                    FlushPending(_maxTimestampSpan + 960);
+                    _ssrc = header.Ssrc;
+                    _lastSeq = -1;
+                    _sawFirstTimestamp = false;
+                    _foreignSsrc = 0;
+                    Console.WriteLine($"\nprevious sender went silent — capturing new sender ssrc 0x{_ssrc:X8}");
+                }
+                else
+                {
+                    _foreignSsrc++;
+                    if (_foreignSsrc == 1)
+                    {
+                        Console.WriteLine($"\nwarning: ignoring packets from ssrc 0x{header.Ssrc:X8} — capture is locked to ssrc 0x{_ssrc:X8} (concurrent sender?)");
+                    }
+                    return;
+                }
             }
+
+            _lastAccept = DateTime.UtcNow;
 
             if (_lastSeq >= 0)
             {
@@ -140,6 +161,16 @@ public sealed class CaptureSession : IDisposable
         double kbps = seconds > 0 ? _bytes * 8 / 1000.0 / seconds : 0;
         Console.Write($"\r  {seconds,6:0.0}s  {_packets} pkts  {kbps,6:0} kbps  lost {_lost}  dup {_dupes}   ");
         _lastReport = DateTime.UtcNow;
+        try
+        {
+            // Bound the damage of a hard kill: at most the tail since the last report is lost.
+            _ogg.Flush();
+            _adpcm.Flush();
+        }
+        catch
+        {
+            // reporting must never kill the capture
+        }
     }
 
     private bool _disposed;

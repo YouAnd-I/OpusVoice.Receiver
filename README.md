@@ -17,14 +17,17 @@ Connection modes:
   Datagrams tunneled through Pinhole are exactly the app's RTP packets, so the
   stream rides NAT traversal + end-to-end encryption with relay fallback
   instead of raw UDP.
-- **`iroh`** — the same encrypted Pinhole session, with native iroh discovery and
-  relay connectivity. Publishes the signed endpoint ID → Pinhole public-key
-  binding and prints an ID and native endpoint QR ticket for the Android app.
-  Requires the updated Pinhole.Net and OpusVoice source builds. The default
-  identity is fresh on each run; persist `PinholeOptions.IdentityKeySeed` for
-  a stable ID.
 - **`udp`** — plain UDP RTP listener on a port (default 5004). This is what the
   released APK speaks today; use it for immediate testing.
+- **`ws`** — WebSocket bridge for the OpusVoice **web console** (browsers cannot
+  send raw UDP): accepts RTP+Opus packets as binary messages at
+  `ws://<lan-ip>:<port>/stream` and feeds the same capture sink as UDP.
+  Fragmented or oversized messages are dropped whole, never muxed into the
+  capture. The capture follows one sender at a time and re-latches to a new
+  SSRC after the previous sender is silent for a few seconds (a restarted
+  console mints a new SSRC); concurrent senders are counted as foreign.
+  IPv4 only, and browsers block `ws://` to LAN IPs from https pages (serve
+  the console over http/localhost, e.g. `npm run dev` in OpusVoice's `web/`).
 
 ## Usage
 
@@ -38,9 +41,12 @@ dotnet run --project src/OpusVoice.Receiver -- iroh
 # Plain UDP mode (works with the current OpusVoice APK: point the app at this PC's IP)
 dotnet run --project src/OpusVoice.Receiver -- udp 5004
 
+# WebSocket bridge for the web console (scan or paste the printed ws:// QR there)
+dotnet run --project src/OpusVoice.Receiver -- ws 8080
+
 # Options
 #   udp | pinhole | iroh | ws   mode (default pinhole)
-#   5004 | --port N    UDP port in udp mode
+#   5004 | --port N    port in udp/ws mode
 #   --out DIR          output directory (default: current directory)
 ```
 
