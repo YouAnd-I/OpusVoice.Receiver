@@ -60,7 +60,7 @@ try
     }
     else
     {
-        await RunPinhole(basePath, session, cts.Token, publishIroh: mode == "iroh", pinholePort);
+        await RunPinhole(basePath, session, cts.Token, showIrohTicket: mode == "iroh", pinholePort);
     }
 }
 catch (OperationCanceledException)
@@ -185,7 +185,7 @@ static async Task HandleSocket(HttpListenerContext http, CaptureSession session)
     }
 }
 
-static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct, bool publishIroh, int? port)
+static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct, bool showIrohTicket, int? port)
 {
     // ReceiveBufferCapacity enables the buffered ReadAllAsync loop; 64 KiB is
     // several seconds of 128 kbps audio, so datagrams never drop off-thread.
@@ -194,13 +194,15 @@ static async Task RunPinhole(string basePath, CaptureSession session, Cancellati
         {
             Bind = port is { } fixedPort ? new IPEndPoint(IPAddress.IPv6Any, fixedPort) : null,
             ReceiveBufferCapacity = 64 * 1024,
-            PublishIrohAddress = publishIroh,
+            PublishIrohAddress = true,
+            PublishDirectIrohAddresses = true,
+            EnableLanDiscovery = true,
             AdvertiseLinkLocal = true,
         }, ct);
     Console.WriteLine($"listening: Pinhole UDP port {node.LocalPort}");
     Console.WriteLine("connection string — give this to the sender:");
     Console.WriteLine("  " + node.ConnectionString);
-    if (publishIroh)
+    if (showIrohTicket)
     {
         Console.WriteLine("iroh endpoint ID — paste this in the app:");
         Console.WriteLine("  " + node.IrohAddress.EndpointId);

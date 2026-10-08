@@ -13,13 +13,14 @@ be inspected, measured, and played back:
 Connection modes:
 
 - **`pinhole` (default)** — binds a [Pinhole.Net](https://github.com/IAFahim/Pinhole.Net)
-  node, prints its **connection string** (`pinhole1:…`), and accepts one peer.
+  node with LAN announcements and signed endpoint/direct-address publication,
+  prints its **connection string** (`pinhole1:…`), and accepts one peer.
   Datagrams tunneled through Pinhole are exactly the app's RTP packets, so the
   stream rides NAT traversal + end-to-end encryption with relay fallback
   instead of raw UDP.
-- **`iroh`** — the same encrypted Pinhole session, with native iroh discovery and
-  relay connectivity. Publishes the signed endpoint ID → Pinhole public-key
-  binding and prints an ID and native endpoint QR ticket for the Android app.
+- **`iroh`** — the same encrypted, discoverable Pinhole session, displaying an
+  endpoint ID and native endpoint QR ticket for the Android app. Both modes publish
+  the signed endpoint ID → Pinhole public-key binding and direct candidates.
   Requires the updated Pinhole.Net and OpusVoice source builds. The default
   identity is fresh on each run; persist `PinholeOptions.IdentityKeySeed` for
   a stable ID.
@@ -41,7 +42,7 @@ Connection modes:
 # Pinhole mode: run this, then paste the printed connection string into the sender
 dotnet run --project src/OpusVoice.Receiver
 
-# Native iroh ID/ticket: publish signed discovery, then scan the QR in OpusVoice
+# Native iroh ID/ticket display: scan the QR in OpusVoice
 dotnet run --project src/OpusVoice.Receiver -- iroh
 
 # Choose a stable UDP port for Pinhole when the PC firewall needs an explicit rule
@@ -65,6 +66,10 @@ Without a port override, Pinhole/iroh use an OS-assigned UDP port; UDP/ws defaul
 Permit the selected UDP port in the PC firewall when inbound traffic is restricted.
 The receiver prints the bound Pinhole port alongside its connection string. Sharing a
 fresh ticket after restarting ensures the sender uses the current candidates.
+
+Discovery supplies additional addresses to try; NAT policies and host firewalls
+still determine whether a direct path is available. The normal Pinhole ticket
+carries the session-key pin and can be dialed even if signed discovery is unavailable.
 
 ## Requirements
 
