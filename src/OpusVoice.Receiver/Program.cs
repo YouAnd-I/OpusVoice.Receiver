@@ -187,7 +187,7 @@ static async Task RunPinhole(string basePath, CaptureSession session, Cancellati
     // ReceiveBufferCapacity enables the buffered ReadAllAsync loop; 64 KiB is
     // several seconds of 128 kbps audio, so datagrams never drop off-thread.
     await using PinholeNode node = await PinholeNode.BindAsync(
-        new PinholeOptions { ReceiveBufferCapacity = 64 * 1024, PublishIrohAddress = publishIroh }, ct);
+        new PinholeOptions { ReceiveBufferCapacity = 64 * 1024, PublishIrohAddress = publishIroh, AdvertiseLinkLocal = true }, ct);
     Console.WriteLine("connection string — give this to the sender:");
     Console.WriteLine("  " + node.ConnectionString);
     if (publishIroh)
