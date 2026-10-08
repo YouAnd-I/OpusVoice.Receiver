@@ -44,6 +44,9 @@ dotnet run --project src/OpusVoice.Receiver
 # Native iroh ID/ticket: publish signed discovery, then scan the QR in OpusVoice
 dotnet run --project src/OpusVoice.Receiver -- iroh
 
+# Choose a stable UDP port for Pinhole when the PC firewall needs an explicit rule
+dotnet run --project src/OpusVoice.Receiver -- pinhole --port 5004
+
 # Plain UDP mode (works with the current OpusVoice APK: point the app at this PC's IP)
 dotnet run --project src/OpusVoice.Receiver -- udp 5004
 
@@ -52,11 +55,16 @@ dotnet run --project src/OpusVoice.Receiver -- ws 8080
 
 # Options
 #   udp | pinhole | iroh | ws   mode (default pinhole)
-#   5004 | --port N    port in udp/ws mode
+#   5004 | --port N    port in any mode (UDP also in pinhole/iroh mode)
 #   --out DIR          output directory (default: current directory)
 ```
 
 `Ctrl-C` closes the capture cleanly (EOS page + summary file).
+
+Without a port override, Pinhole/iroh use an OS-assigned UDP port; UDP/ws default to 5004.
+Permit the selected UDP port in the PC firewall when inbound traffic is restricted.
+The receiver prints the bound Pinhole port alongside its connection string. Sharing a
+fresh ticket after restarting ensures the sender uses the current candidates.
 
 ## Requirements
 

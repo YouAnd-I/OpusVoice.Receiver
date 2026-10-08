@@ -17,6 +17,7 @@ using System.Net.WebSockets;
 
 string mode = args.FirstOrDefault(a => a is "pinhole" or "iroh" or "udp" or "ws") ?? "pinhole";
 int port = 5004;
+int? pinholePort = null;
 string outDir = ".";
 for (int i = 0; i < args.Length; i++)
 {
@@ -27,6 +28,7 @@ for (int i = 0; i < args.Length; i++)
             Console.WriteLine("error: --port expects a port number between 1 and 65535");
             return;
         }
+        pinholePort = port;
     }
     else if (args[i] == "--out" && i + 1 < args.Length)
     {
@@ -35,6 +37,7 @@ for (int i = 0; i < args.Length; i++)
     else if (int.TryParse(args[i], out int parsed) && parsed is > 0 and < 65536)
     {
         port = parsed;
+        pinholePort = port;
     }
 }
 
@@ -57,7 +60,7 @@ try
     }
     else
     {
-        await RunPinhole(basePath, session, cts.Token, publishIroh: mode == "iroh");
+        await RunPinhole(basePath, session, cts.Token, publishIroh: mode == "iroh", pinholePort);
     }
 }
 catch (OperationCanceledException)
@@ -182,12 +185,19 @@ static async Task HandleSocket(HttpListenerContext http, CaptureSession session)
     }
 }
 
-static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct, bool publishIroh)
+static async Task RunPinhole(string basePath, CaptureSession session, CancellationToken ct, bool publishIroh, int? port)
 {
     // ReceiveBufferCapacity enables the buffered ReadAllAsync loop; 64 KiB is
     // several seconds of 128 kbps audio, so datagrams never drop off-thread.
     await using PinholeNode node = await PinholeNode.BindAsync(
-        new PinholeOptions { ReceiveBufferCapacity = 64 * 1024, PublishIrohAddress = publishIroh, AdvertiseLinkLocal = true }, ct);
+        new PinholeOptions
+        {
+            Bind = port is { } fixedPort ? new IPEndPoint(IPAddress.IPv6Any, fixedPort) : null,
+            ReceiveBufferCapacity = 64 * 1024,
+            PublishIrohAddress = publishIroh,
+            AdvertiseLinkLocal = true,
+        }, ct);
+    Console.WriteLine($"listening: Pinhole UDP port {node.LocalPort}");
     Console.WriteLine("connection string — give this to the sender:");
     Console.WriteLine("  " + node.ConnectionString);
     if (publishIroh)
